@@ -295,7 +295,7 @@ const BackgroundAudio = ({ shouldPlay }) => {
 
     console.log("Creating YT.Player instance...");
     const pVars = {
-      'autoplay': 0, // Tắt autoplay của iframe để manual control
+      'autoplay': 1, // Bật autoplay để đảm bảo load là chạy
       'playsinline': 1,
       'rel': 0,
       'controls': 1,
@@ -323,6 +323,9 @@ const BackgroundAudio = ({ shouldPlay }) => {
           }
           if (event.data === 2 || event.data === 0) { // PAUSE/END
              setIsYtPlaying(false);
+          }
+          if (event.data === 5) { // CUED
+             event.target.playVideo();
           }
         },
         'onError': (event) => {
@@ -381,7 +384,7 @@ const BackgroundAudio = ({ shouldPlay }) => {
     console.log("Loading YouTube Playlist:", playlistId);
     const action = (player) => {
       const p = player || playerRef.current;
-      if (p && p.loadPlaylist) p.loadPlaylist({ listType: 'playlist', list: playlistId });
+      if (p && p.loadPlaylist) p.loadPlaylist({ listType: 'playlist', list: playlistId, index: 0 });
     };
     if (!playerInit || !window.YT || !window.YT.Player) initPlayer(action);
     else action();
