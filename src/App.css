@@ -777,6 +777,7 @@ body {
 }
 
 .volume-slider {
+  appearance: none;
   -webkit-appearance: none;
   width: 100%;
   height: 4px;
@@ -992,10 +993,13 @@ body {
     padding: 0.6rem 1rem; 
     background: rgba(5,5,5,0.95); 
   }
+
+  .header-stats { display: none; }
   
-  .brand { font-size: 1.1rem; }
+  .brand { font-size: 1.1rem; gap: 8px; }
+  .header-right { gap: 10px; } /* Tighten spacing */
   .nav-logo { height: 32px; } /* Smaller logo */
-  .menu-btn { width: 32px; height: 32px; margin-right: 5px !important; }
+  .menu-btn { width: 32px; height: 32px; margin-right: 0 !important; } /* Reset margin right */
 
   .hero-section {
     min-height: auto;

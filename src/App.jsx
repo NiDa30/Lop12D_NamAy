@@ -264,6 +264,7 @@ const BackgroundAudio = ({ shouldPlay }) => {
   const [statusMsg, setStatusMsg] = useState("");
   const [searchResults, setSearchResults] = useState([]);  
   const [loadingSearch, setLoadingSearch] = useState(false);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(-1);
   
   const audioRef = useRef(null);
   const playerRef = useRef(null); 
@@ -273,6 +274,7 @@ const BackgroundAudio = ({ shouldPlay }) => {
   const hasStartedRef = useRef(false);
   const stateRef = useRef({ local: false, yt: false });
   const resumeStateRef = useRef({ local: false, yt: false });
+  const searchCache = useRef({}); // Cache for search results
 
   // Sync Refs with State
   useEffect(() => { stateRef.current.local = playing; }, [playing]);
@@ -474,6 +476,20 @@ const BackgroundAudio = ({ shouldPlay }) => {
        playerRef.current.playVideo();
     }
 
+    // 1. Check if we are playing from Search Results
+    if (currentSearchIndex >= 0 && searchResults.length > 0) {
+       const newIndex = (currentSearchIndex + direction + searchResults.length) % searchResults.length;
+       const nextVideo = searchResults[newIndex];
+       if (nextVideo && nextVideo.id && nextVideo.id.videoId) {
+          console.log("Playing next search result:", newIndex, nextVideo.snippet.title);
+          loadVideo(nextVideo.id.videoId);
+          setCurrentSearchIndex(newIndex);
+          setStatusMsg("▶️ " + (nextVideo.snippet.title?.slice(0, 30) || 'Playing...'));
+          return;
+       }
+    }
+
+    // 2. Fallback to Native YouTube Playlist (nextVideo/previousVideo)
     if (direction > 0) {
       if(playerRef.current.nextVideo) playerRef.current.nextVideo();
     } else {
@@ -486,10 +502,14 @@ const BackgroundAudio = ({ shouldPlay }) => {
       setYtQuery(mix.name);
       setStatusMsg(`Loading ${mix.name}...`);
       loadPlaylist(mix.id);
+      setCurrentSearchIndex(-1); // Reset search index when loading mix
   };
 
   const handleSearch = async (e) => {
     if (e.key !== 'Enter' || !ytQuery.trim()) return;
+    
+    // Prevent double submission / Wait for player
+    if (loadingSearch) return; 
     
     if (!playerInit) {
       setStatusMsg("⏳ YouTube loading...");
@@ -498,7 +518,6 @@ const BackgroundAudio = ({ shouldPlay }) => {
 
     setYtError(false);
     setStatusMsg("🔍 Search...");
-    setSearchResults([]);
     setLoadingSearch(true);
 
     const videoId = extractVideoId(ytQuery);
@@ -508,11 +527,30 @@ const BackgroundAudio = ({ shouldPlay }) => {
       loadVideo(videoId);
       setStatusMsg("▶️ Video OK");
       setLoadingSearch(false);
+      setCurrentSearchIndex(-1);
       return;
     }
     if (playlistId) {
       loadPlaylist(playlistId);
       setStatusMsg("📱 Playlist...");
+      setLoadingSearch(false);
+      setCurrentSearchIndex(-1);
+      return;
+    }
+
+    // -- CACHE CHECK --
+    const cacheKey = ytQuery.trim().toLowerCase();
+    if (searchCache.current[cacheKey]) {
+      console.log("Using cached search results for:", cacheKey);
+      const cachedItems = searchCache.current[cacheKey];
+      setSearchResults(cachedItems);
+      
+      const firstId = cachedItems[0]?.id?.videoId;
+      if (firstId) {
+         loadVideo(firstId);
+         setStatusMsg("▶️ " + (cachedItems[0].snippet.title?.slice(0, 30) || 'Playing...'));
+         setCurrentSearchIndex(0); // Start at 0
+      }
       setLoadingSearch(false);
       return;
     }
@@ -531,15 +569,23 @@ const BackgroundAudio = ({ shouldPlay }) => {
       
       if (data.items?.length > 0) {
         setSearchResults(data.items);
+        // Save to cache
+        searchCache.current[cacheKey] = data.items;
+
         const firstId = data.items[0].id.videoId;
-        if(firstId) loadVideo(firstId);
+        if(firstId) {
+           loadVideo(firstId);
+           setCurrentSearchIndex(0); // Start at 0
+        }
         setStatusMsg("▶️ " + (data.items[0].snippet.title?.slice(0, 30) || 'Playing...'));
       } else {
         setStatusMsg("😞 No results");
+        setSearchResults([]); // Clear only on hard error/empty
       }
     } catch (err) {
       setStatusMsg("❌ " + err.message.slice(0, 20));
       console.error(err);
+      setSearchResults([]);
     } finally {
       setLoadingSearch(false);
     }
@@ -587,8 +633,12 @@ const BackgroundAudio = ({ shouldPlay }) => {
 
          {searchResults.length > 0 && (
            <div style={{padding: '10px', maxHeight: 120, overflowY: 'auto', background: '#111'}}>
-             {searchResults.map((item) => (
-               <button key={item.id.videoId} onClick={() => loadVideo(item.id.videoId)}
+             {searchResults.map((item, idx) => (
+               <button key={item.id.videoId} onClick={() => {
+                   loadVideo(item.id.videoId);
+                   setCurrentSearchIndex(idx); // Update index on click
+                   setStatusMsg("▶️ " + (item.snippet.title?.slice(0, 30)));
+               }}
                  style={{display: 'block', width: '100%', textAlign: 'left', padding: '6px 0', background: 'none', border: 'none', color: '#ccc'}}>
                  ▶️ {item.snippet.title.slice(0, 45)}...
                </button>
@@ -814,6 +864,24 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const touchStartDist = useRef(0);
   const initialZoom = useRef(1);
+  
+  // -- ZOOM CONTROLS VISIBILITY --
+  const [showZoomControls, setShowZoomControls] = useState(false);
+  const zoomControlsTimeoutRef = useRef(null);
+
+  const activateZoomControls = useCallback(() => {
+    setShowZoomControls(true);
+    if (zoomControlsTimeoutRef.current) clearTimeout(zoomControlsTimeoutRef.current);
+    zoomControlsTimeoutRef.current = setTimeout(() => {
+      setShowZoomControls(false);
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (zoomControlsTimeoutRef.current) clearTimeout(zoomControlsTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     setZoom(1);
@@ -1312,19 +1380,30 @@ function App() {
               </button>
               
               {/* ZOOM CONTROLS (Only for images) */}
+              {/* ZOOM CONTROLS (Only for images) - Auto-hide */}
               {selectedItem.type === 'image' && (
-                <div style={{
-                  position: 'absolute', bottom: 80, left: '50%', transform: 'translateX(-50%)',
-                  display: 'flex', gap: 15, background: 'rgba(255,255,255,0.1)',
-                  backdropFilter: 'blur(10px)', padding: '10px 20px', borderRadius: '40px',
-                  zIndex: 200, border: '1px solid rgba(255,255,255,0.1)'
-                }}>
-                  <button onClick={() => setZoom(Math.max(1, zoom - 0.5))} style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex'}} title="Zoom Out"><IoRemove size={20}/></button>
-                  <span style={{fontSize: '0.8rem', color: 'white', minWidth: 40, textAlign: 'center'}}>{Math.round(zoom * 100)}%</span>
-                  <button onClick={() => setZoom(Math.min(4, zoom + 0.5))} style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex'}} title="Zoom In"><IoAdd size={20}/></button>
-                  <div style={{width: 1, height: 15, background: 'rgba(255,255,255,0.2)'}} />
-                  <button onClick={() => setZoom(1)} style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex'}} title="Reset"><IoRefreshOutline size={20}/></button>
-                </div>
+                <AnimatePresence>
+                  {showZoomControls && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 20 }}
+                      style={{
+                        position: 'absolute', bottom: 80, left: '50%', transform: 'translateX(-50%)',
+                        display: 'flex', gap: 15, background: 'rgba(255,255,255,0.1)',
+                        backdropFilter: 'blur(10px)', padding: '10px 20px', borderRadius: '40px',
+                        zIndex: 200, border: '1px solid rgba(255,255,255,0.1)'
+                      }}
+                      onClick={(e) => { e.stopPropagation(); activateZoomControls(); }}
+                    >
+                      <button onClick={() => { setZoom(Math.max(1, zoom - 0.5)); activateZoomControls(); }} style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex'}} title="Zoom Out"><IoRemove size={20}/></button>
+                      <span style={{fontSize: '0.8rem', color: 'white', minWidth: 40, textAlign: 'center'}}>{Math.round(zoom * 100)}%</span>
+                      <button onClick={() => { setZoom(Math.min(4, zoom + 0.5)); activateZoomControls(); }} style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex'}} title="Zoom In"><IoAdd size={20}/></button>
+                      <div style={{width: 1, height: 15, background: 'rgba(255,255,255,0.2)'}} />
+                      <button onClick={() => { setZoom(1); activateZoomControls(); }} style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex'}} title="Reset"><IoRefreshOutline size={20}/></button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               )}
               
               <motion.div 
@@ -1368,8 +1447,10 @@ function App() {
                          transformOrigin: 'center center',
                          touchAction: 'none' // Chặn scroll trình duyệt khi pinch
                        }}
+                       onClick={() => activateZoomControls()} // Tap to show controls
                        onTouchStart={(e) => {
                          if (e.touches.length === 2) {
+                           activateZoomControls();
                            const dist = Math.hypot(
                              e.touches[0].clientX - e.touches[1].clientX,
                              e.touches[0].clientY - e.touches[1].clientY
@@ -1380,6 +1461,7 @@ function App() {
                        }}
                        onTouchMove={(e) => {
                          if (e.touches.length === 2 && touchStartDist.current > 0) {
+                           activateZoomControls();
                            const dist = Math.hypot(
                              e.touches[0].clientX - e.touches[1].clientX,
                              e.touches[0].clientY - e.touches[1].clientY
